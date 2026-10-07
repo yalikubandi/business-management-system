@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
-const API_URL = (
-  import.meta.env.VITE_API_URL || "http://127.0.0.1:5000/api"
-).replace(/\/$/, "");
+const configuredApiUrl =
+  import.meta.env.VITE_API_URL || "http://127.0.0.1:5000/api";
+const normalizedApiUrl = configuredApiUrl.replace(/\/+$/, "");
+const API_URL = normalizedApiUrl.endsWith("/api")
+  ? normalizedApiUrl
+  : `${normalizedApiUrl}/api`;
 
 const formatMoney = (value) =>
   `TZS ${Number(value || 0).toLocaleString("en-TZ", {

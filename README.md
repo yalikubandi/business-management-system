@@ -43,3 +43,12 @@ Frontend setting:
 ## Hosting status
 
 The product, purchase, and sales APIs use MySQL. This project is not yet safe to expose publicly: the current login is a hardcoded client-side demo check, and the API has no server-side authentication. Gifts, expenses, and settings are UI placeholders; reports are limited to basic product/stock calculations. Add server-side authentication and authorization, finish the unfinished modules, and define database migrations, backups, and a production deployment target before public launch.
+
+## Deploy to Render
+
+1. Create an externally hosted MySQL database. Render Blueprints do not provision MySQL. Make sure its provider allows connections from Render and create the `business_management` database.
+2. In the Render Dashboard, choose **New > Blueprint** and select this GitHub repository. Render reads the root `render.yaml` and creates the API and frontend services.
+3. Enter the MySQL host, username, password, and database name when prompted. The Blueprint connects the frontend URL to the API and configures the matching CORS origin.
+4. Wait for both services to finish deploying, then open the frontend service URL.
+
+The API creates its tables when it starts. Do not expose this demo publicly with real business data until server-side authentication and authorization are implemented; the current login is only a client-side demo check and the API endpoints are unauthenticated.
