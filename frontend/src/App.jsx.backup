@@ -1,0 +1,1208 @@
+import { useEffect, useMemo, useState } from "react";
+import "./App.css";
+
+const API_URL = "http://127.0.0.1:5000/api";
+
+const menuItems = [
+  { name: "Dashboard", icon: "▦" },
+  { name: "Products", icon: "▣" },
+  { name: "Purchases", icon: "🛒" },
+  { name: "Sales", icon: "💰" },
+  { name: "Gifts", icon: "🎁" },
+  { name: "Expenses", icon: "💸" },
+  { name: "Reports", icon: "📈" },
+  { name: "Notifications", icon: "🔔" },
+  { name: "Settings", icon: "⚙" },
+];
+
+const emptyProduct = {
+  name: "",
+  category: "",
+  stock_quantity: "",
+  buying_price: "",
+  selling_price: "",
+  minimum_stock: 5,
+  description: "",
+};
+
+function formatMoney(value) {
+  return `TSh ${Number(value || 0).toLocaleString()}`;
+}
+
+/* =====================================================
+   LOGIN
+===================================================== */
+
+function Login({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+
+    if (username === "admin" && password === "admin123") {
+      onLogin();
+    } else {
+      setError("Invalid username or password.");
+    }
+  };
+
+  return (
+    <div className="login-page">
+      <div className="login-container">
+
+        <div className="login-brand-panel">
+          <div className="brand-logo">BM</div>
+
+          <h1>
+            Business
+            <br />
+            Management
+            <br />
+            System
+          </h1>
+
+          <p>
+            Manage your inventory, sales, purchases,
+            expenses and business performance from one place.
+          </p>
+
+          <div className="brand-points">
+            <span>✓ Inventory Management</span>
+            <span>✓ Sales & Purchases</span>
+            <span>✓ Profit & Loss</span>
+            <span>✓ Business Reports</span>
+          </div>
+        </div>
+
+        <div className="login-form-panel">
+          <div className="login-welcome">
+            <span className="welcome-label">WELCOME BACK</span>
+            <h2>Sign in to your account</h2>
+            <p>Enter your credentials to continue.</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="login-form">
+
+            <label>Username</label>
+
+            <div className="login-input">
+              <span>👤</span>
+              <input
+                type="text"
+                placeholder="Enter username"
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setError("");
+                }}
+                required
+              />
+            </div>
+
+            <label>Password</label>
+
+            <div className="login-input">
+              <span>🔒</span>
+
+              <input
+                type={showPassword ? "text" : "password"}
+                placeholder="Enter password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError("");
+                }}
+                required
+              />
+
+              <button
+                type="button"
+                className="password-toggle"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            {error && (
+              <div className="login-error">
+                {error}
+              </div>
+            )}
+
+            <button className="login-submit" type="submit">
+              Sign In
+            </button>
+
+          </form>
+
+          <div className="login-demo">
+            <strong>Demo account</strong>
+            <span>Username: admin</span>
+            <span>Password: admin123</span>
+          </div>
+
+          <small className="copyright">
+            Business Management System © 2026
+          </small>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================
+   DASHBOARD
+===================================================== */
+
+function DashboardHome({ products, onNavigate }) {
+  const totalProducts = products.length;
+
+  const totalStock = products.reduce(
+    (sum, product) => sum + Number(product.stock_quantity || 0),
+    0
+  );
+
+  const stockValue = products.reduce(
+    (sum, product) =>
+      sum +
+      Number(product.stock_quantity || 0) *
+        Number(product.buying_price || 0),
+    0
+  );
+
+  const potentialProfit = products.reduce(
+    (sum, product) =>
+      sum +
+      (Number(product.selling_price || 0) -
+        Number(product.buying_price || 0)) *
+        Number(product.stock_quantity || 0),
+    0
+  );
+
+  const lowStockProducts = products.filter(
+    (product) =>
+      Number(product.stock_quantity || 0) <=
+      Number(product.minimum_stock ?? 5)
+  );
+
+  return (
+    <div className="content-page">
+
+      <div className="welcome-banner">
+        <div>
+          <span className="eyebrow">BUSINESS OVERVIEW</span>
+          <h2>Good morning, Admin 👋</h2>
+          <p>
+            Here is what's happening with your business today.
+          </p>
+        </div>
+
+        <button
+          className="banner-button"
+          onClick={() => onNavigate("Products")}
+        >
+          + Add Product
+        </button>
+      </div>
+
+      <div className="stats-grid">
+
+        <StatCard
+          icon="📦"
+          title="Total Products"
+          value={totalProducts}
+          subtitle="Products in database"
+        />
+
+        <StatCard
+          icon="📊"
+          title="Total Stock"
+          value={totalStock.toLocaleString()}
+          subtitle="Units available"
+        />
+
+        <StatCard
+          icon="💵"
+          title="Stock Value"
+          value={formatMoney(stockValue)}
+          subtitle="Current inventory value"
+        />
+
+        <StatCard
+          icon="📈"
+          title="Potential Profit"
+          value={formatMoney(potentialProfit)}
+          subtitle="Based on current stock"
+        />
+
+      </div>
+
+      <div className="dashboard-grid">
+
+        <div className="content-card">
+          <div className="card-header">
+            <div>
+              <h3>Inventory Overview</h3>
+              <p>Current product stock status</p>
+            </div>
+
+            <button
+              className="text-button"
+              onClick={() => onNavigate("Products")}
+            >
+              View all
+            </button>
+          </div>
+
+          {products.length === 0 ? (
+            <EmptyState
+              icon="📦"
+              title="No products yet"
+              text="Add your first product to start managing inventory."
+              buttonText="Add Product"
+              onClick={() => onNavigate("Products")}
+            />
+          ) : (
+            <div className="inventory-list">
+              {products.slice(0, 5).map((product) => {
+                const quantity = Number(product.stock_quantity || 0);
+                const minimum = Number(product.minimum_stock ?? 5);
+                const low = quantity <= minimum;
+
+                return (
+                  <div className="inventory-row" key={product.id}>
+                    <div className="product-avatar">
+                      {product.name?.charAt(0)?.toUpperCase() || "P"}
+                    </div>
+
+                    <div className="inventory-info">
+                      <strong>{product.name}</strong>
+                      <span>{product.category || "Other"}</span>
+                    </div>
+
+                    <div className="inventory-quantity">
+                      <strong>{quantity}</strong>
+                      <span>units</span>
+                    </div>
+
+                    <span className={low ? "status low" : "status good"}>
+                      {low ? "Low Stock" : "In Stock"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="content-card">
+          <div className="card-header">
+            <div>
+              <h3>Quick Actions</h3>
+              <p>Frequently used functions</p>
+            </div>
+          </div>
+
+          <div className="quick-actions">
+
+            <QuickAction
+              icon="📦"
+              title="Add Product"
+              text="Add a new item"
+              onClick={() => onNavigate("Products")}
+            />
+
+            <QuickAction
+              icon="🛒"
+              title="New Purchase"
+              text="Record stock purchase"
+              onClick={() => onNavigate("Purchases")}
+            />
+
+            <QuickAction
+              icon="💰"
+              title="New Sale"
+              text="Record a sale"
+              onClick={() => onNavigate("Sales")}
+            />
+
+            <QuickAction
+              icon="💸"
+              title="Add Expense"
+              text="Record business expense"
+              onClick={() => onNavigate("Expenses")}
+            />
+
+          </div>
+        </div>
+
+      </div>
+
+      <div className="content-card">
+        <div className="card-header">
+          <div>
+            <h3>Low Stock Alerts</h3>
+            <p>Products that need attention</p>
+          </div>
+
+          <span className="alert-count">
+            {lowStockProducts.length} alerts
+          </span>
+        </div>
+
+        {lowStockProducts.length === 0 ? (
+          <div className="success-message">
+            ✓ All products have sufficient stock.
+          </div>
+        ) : (
+          <div className="alert-list">
+            {lowStockProducts.slice(0, 5).map((product) => (
+              <div className="alert-item" key={product.id}>
+                <span>⚠️</span>
+                <div>
+                  <strong>{product.name}</strong>
+                  <p>
+                    Only {Number(product.stock_quantity || 0)} units remaining.
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ icon, title, value, subtitle }) {
+  return (
+    <div className="stat-card">
+      <div className="stat-icon">{icon}</div>
+      <div>
+        <span>{title}</span>
+        <h3>{value}</h3>
+        <small>{subtitle}</small>
+      </div>
+    </div>
+  );
+}
+
+function QuickAction({ icon, title, text, onClick }) {
+  return (
+    <button className="quick-action" onClick={onClick}>
+      <span className="quick-icon">{icon}</span>
+      <span>
+        <strong>{title}</strong>
+        <small>{text}</small>
+      </span>
+      <b>›</b>
+    </button>
+  );
+}
+
+function EmptyState({ icon, title, text, buttonText, onClick }) {
+  return (
+    <div className="empty-state">
+      <div>{icon}</div>
+      <h3>{title}</h3>
+      <p>{text}</p>
+      {buttonText && (
+        <button className="primary-button" onClick={onClick}>
+          {buttonText}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* =====================================================
+   PRODUCTS
+===================================================== */
+
+function Products({ products, setProducts }) {
+  const [showForm, setShowForm] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("All");
+  const [message, setMessage] = useState("");
+  const [formData, setFormData] = useState(emptyProduct);
+
+  const loadProducts = async () => {
+    try {
+      setLoading(true);
+
+      const response = await fetch(`${API_URL}/products`);
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to load products");
+      }
+
+      setProducts(data);
+    } catch (error) {
+      console.error(error);
+      setMessage(`Error: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProducts();
+  }, []);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+
+    setFormData((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+  };
+
+  const addProduct = async (e) => {
+    e.preventDefault();
+
+    try {
+      setLoading(true);
+      setMessage("");
+
+      const productData = {
+        name: formData.name.trim(),
+        category: formData.category,
+        stock_quantity: Number(formData.stock_quantity),
+        buying_price: Number(formData.buying_price),
+        selling_price: Number(formData.selling_price),
+        minimum_stock: Number(formData.minimum_stock),
+        description: formData.description.trim(),
+      };
+
+      const response = await fetch(`${API_URL}/products`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(productData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to save product");
+      }
+
+      setFormData(emptyProduct);
+      setShowForm(false);
+
+      await loadProducts();
+
+      setMessage("Product saved successfully.");
+    } catch (error) {
+      console.error(error);
+      setMessage(`Error: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteProduct = async (id) => {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this product?"
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setLoading(true);
+
+      const response = await fetch(`${API_URL}/products/${id}`, {
+        method: "DELETE",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete product");
+      }
+
+      await loadProducts();
+
+      setMessage("Product deleted successfully.");
+    } catch (error) {
+      console.error(error);
+      setMessage(`Error: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const categories = useMemo(() => {
+    const values = products
+      .map((product) => product.category)
+      .filter(Boolean);
+
+    return ["All", ...new Set(values)];
+  }, [products]);
+
+  const filteredProducts = products.filter((product) => {
+    const searchValue = search.toLowerCase();
+
+    const matchesSearch =
+      String(product.name || "").toLowerCase().includes(searchValue) ||
+      String(product.category || "").toLowerCase().includes(searchValue);
+
+    const matchesCategory =
+      categoryFilter === "All" ||
+      product.category === categoryFilter;
+
+    return matchesSearch && matchesCategory;
+  });
+
+  const totalStock = products.reduce(
+    (sum, product) => sum + Number(product.stock_quantity || 0),
+    0
+  );
+
+  const stockValue = products.reduce(
+    (sum, product) =>
+      sum +
+      Number(product.stock_quantity || 0) *
+        Number(product.buying_price || 0),
+    0
+  );
+
+  const potentialProfit = products.reduce(
+    (sum, product) =>
+      sum +
+      (Number(product.selling_price || 0) -
+        Number(product.buying_price || 0)) *
+        Number(product.stock_quantity || 0),
+    0
+  );
+
+  return (
+    <div className="content-page">
+
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">INVENTORY</span>
+          <h2>Products</h2>
+          <p>Manage all products and stock in your business.</p>
+        </div>
+
+        <button
+          className="primary-button"
+          onClick={() => setShowForm(true)}
+        >
+          + Add Product
+        </button>
+      </div>
+
+      {message && (
+        <div
+          className={
+            message.startsWith("Error")
+              ? "system-message error"
+              : "system-message"
+          }
+        >
+          {message}
+        </div>
+      )}
+
+      <div className="stats-grid product-stats">
+
+        <StatCard
+          icon="📦"
+          title="Products"
+          value={products.length}
+          subtitle="Total products"
+        />
+
+        <StatCard
+          icon="📊"
+          title="Stock Units"
+          value={totalStock.toLocaleString()}
+          subtitle="Available units"
+        />
+
+        <StatCard
+          icon="💵"
+          title="Stock Value"
+          value={formatMoney(stockValue)}
+          subtitle="Buying value"
+        />
+
+        <StatCard
+          icon="📈"
+          title="Potential Profit"
+          value={formatMoney(potentialProfit)}
+          subtitle="Current inventory"
+        />
+
+      </div>
+
+      <div className="content-card">
+
+        <div className="table-toolbar">
+
+          <div>
+            <h3>Product Inventory</h3>
+            <p>{filteredProducts.length} products displayed</p>
+          </div>
+
+          <div className="table-filters">
+
+            <div className="search-box">
+              <span>⌕</span>
+              <input
+                type="text"
+                placeholder="Search products..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+            >
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+
+          </div>
+        </div>
+
+        <div className="table-wrapper">
+
+          {loading ? (
+            <div className="table-loading">
+              <div className="spinner"></div>
+              Loading products...
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <EmptyState
+              icon="📦"
+              title="No products found"
+              text={
+                search
+                  ? "Try another search term."
+                  : "Add your first product to your inventory."
+              }
+              buttonText={!search ? "Add Product" : ""}
+              onClick={() => setShowForm(true)}
+            />
+          ) : (
+            <table className="data-table">
+
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>PRODUCT</th>
+                  <th>CATEGORY</th>
+                  <th>STOCK</th>
+                  <th>BUYING</th>
+                  <th>SELLING</th>
+                  <th>PROFIT / UNIT</th>
+                  <th>ACTION</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredProducts.map((product, index) => {
+                  const buying = Number(product.buying_price || 0);
+                  const selling = Number(product.selling_price || 0);
+                  const quantity = Number(product.stock_quantity || 0);
+                  const minimum = Number(product.minimum_stock ?? 5);
+                  const profit = selling - buying;
+                  const lowStock = quantity <= minimum;
+
+                  return (
+                    <tr key={product.id}>
+
+                      <td className="muted">
+                        {index + 1}
+                      </td>
+
+                      <td>
+                        <div className="table-product">
+                          <div className="product-avatar">
+                            {product.name?.charAt(0)?.toUpperCase()}
+                          </div>
+
+                          <div>
+                            <strong>{product.name}</strong>
+                            <small>
+                              ID #{product.id}
+                            </small>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td>
+                        <span className="category-badge">
+                          {product.category || "Other"}
+                        </span>
+                      </td>
+
+                      <td>
+                        <span
+                          className={
+                            lowStock
+                              ? "stock-badge low"
+                              : "stock-badge"
+                          }
+                        >
+                          {quantity}
+                          {lowStock && " ⚠"}
+                        </span>
+                      </td>
+
+                      <td>{formatMoney(buying)}</td>
+
+                      <td>{formatMoney(selling)}</td>
+
+                      <td>
+                        <span
+                          className={
+                            profit >= 0
+                              ? "profit positive"
+                              : "profit negative"
+                          }
+                        >
+                          {profit >= 0 ? "+" : "-"}
+                          {formatMoney(Math.abs(profit))}
+                        </span>
+                      </td>
+
+                      <td>
+                        <button
+                          className="delete-button"
+                          onClick={() => deleteProduct(product.id)}
+                        >
+                          Delete
+                        </button>
+                      </td>
+
+                    </tr>
+                  );
+                })}
+              </tbody>
+
+            </table>
+          )}
+        </div>
+      </div>
+
+      {showForm && (
+        <div
+          className="modal-overlay"
+          onMouseDown={() => setShowForm(false)}
+        >
+          <div
+            className="product-modal"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">INVENTORY</span>
+                <h2>Add New Product</h2>
+              </div>
+
+              <button
+                className="modal-close"
+                onClick={() => setShowForm(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={addProduct}>
+
+              <div className="form-grid">
+
+                <div className="form-field full">
+                  <label>Product Name *</label>
+                  <input
+                    name="name"
+                    type="text"
+                    placeholder="e.g. Coca Cola 500ml"
+                    value={formData.name}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Category *</label>
+                  <select
+                    name="category"
+                    value={formData.category}
+                    onChange={handleChange}
+                    required
+                  >
+                    <option value="">Select category</option>
+                    <option value="Food">Food</option>
+                    <option value="Drinks">Drinks</option>
+                    <option value="Electronics">Electronics</option>
+                    <option value="Stationery">Stationery</option>
+                    <option value="Clothes">Clothes</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <div className="form-field">
+                  <label>Stock Quantity *</label>
+                  <input
+                    name="stock_quantity"
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={formData.stock_quantity}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Buying Price (TSh) *</label>
+                  <input
+                    name="buying_price"
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={formData.buying_price}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Selling Price (TSh) *</label>
+                  <input
+                    name="selling_price"
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={formData.selling_price}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>Minimum Stock</label>
+                  <input
+                    name="minimum_stock"
+                    type="number"
+                    min="0"
+                    value={formData.minimum_stock}
+                    onChange={handleChange}
+                  />
+                </div>
+
+                <div className="form-field full">
+                  <label>Description</label>
+                  <textarea
+                    name="description"
+                    rows="4"
+                    placeholder="Product description..."
+                    value={formData.description}
+                    onChange={handleChange}
+                  />
+                </div>
+
+              </div>
+
+              <div className="modal-actions">
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowForm(false)}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={loading}
+                >
+                  {loading ? "Saving..." : "Save Product"}
+                </button>
+
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+/* =====================================================
+   PLACEHOLDER MODULE
+===================================================== */
+
+function ComingSoon({ page }) {
+  const details = {
+    Purchases: {
+      icon: "🛒",
+      title: "Purchase Management",
+      text: "Record purchases and automatically increase product stock.",
+    },
+    Sales: {
+      icon: "💰",
+      title: "Sales Management",
+      text: "Record sales and automatically reduce product stock.",
+    },
+    Gifts: {
+      icon: "🎁",
+      title: "Customer Gifts",
+      text: "Track products given to customers as gifts.",
+    },
+    Expenses: {
+      icon: "💸",
+      title: "Business Expenses",
+      text: "Manage electricity, water, license, transport and other expenses.",
+    },
+    Reports: {
+      icon: "📈",
+      title: "Business Reports",
+      text: "View sales, expenses, profit and loss reports.",
+    },
+    Notifications: {
+      icon: "🔔",
+      title: "Notifications",
+      text: "Monitor low-stock and important business notifications.",
+    },
+    Settings: {
+      icon: "⚙",
+      title: "System Settings",
+      text: "Manage business and system configuration.",
+    },
+  };
+
+  const item = details[page] || details.Settings;
+
+  return (
+    <div className="content-page">
+      <div className="module-placeholder">
+
+        <div className="module-icon">
+          {item.icon}
+        </div>
+
+        <span className="eyebrow">MODULE</span>
+
+        <h2>{item.title}</h2>
+
+        <p>{item.text}</p>
+
+        <span className="coming-badge">
+          Coming in next development stage
+        </span>
+
+      </div>
+    </div>
+  );
+}
+
+/* =====================================================
+   MAIN DASHBOARD
+===================================================== */
+
+function Dashboard({ onLogout, products, setProducts }) {
+  const [activePage, setActivePage] = useState("Dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const handleNavigation = (page) => {
+    setActivePage(page);
+    setSidebarOpen(false);
+  };
+
+  return (
+    <div className="app-shell">
+
+      <aside className={sidebarOpen ? "sidebar open" : "sidebar"}>
+
+        <div className="sidebar-brand">
+          <div className="brand-mark">BM</div>
+
+          <div>
+            <strong>Business</strong>
+            <span>Management System</span>
+          </div>
+        </div>
+
+        <div className="sidebar-section-title">
+          MAIN MENU
+        </div>
+
+        <nav className="sidebar-nav">
+
+          {menuItems.map((item) => (
+            <button
+              key={item.name}
+              className={
+                activePage === item.name
+                  ? "nav-item active"
+                  : "nav-item"
+              }
+              onClick={() => handleNavigation(item.name)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span>{item.name}</span>
+
+              {item.name === "Notifications" && (
+                <b className="nav-count">3</b>
+              )}
+            </button>
+          ))}
+
+        </nav>
+
+        <div className="sidebar-bottom">
+
+          <div className="connection-status">
+            <span className="online-dot"></span>
+            <div>
+              <strong>System Online</strong>
+              <small>Flask API connected</small>
+            </div>
+          </div>
+
+          <button className="logout-button" onClick={onLogout}>
+            <span>⇥</span>
+            Logout
+          </button>
+
+        </div>
+
+      </aside>
+
+      <main className="main-area">
+
+        <header className="topbar">
+
+          <button
+            className="mobile-menu"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+          >
+            ☰
+          </button>
+
+          <div className="topbar-title">
+            <h1>{activePage}</h1>
+            <p>Manage your business efficiently</p>
+          </div>
+
+          <div className="topbar-actions">
+
+            <button
+              className="notification-button"
+              onClick={() => handleNavigation("Notifications")}
+            >
+              🔔
+              <span>3</span>
+            </button>
+
+            <div className="profile">
+              <div className="profile-avatar">A</div>
+
+              <div>
+                <strong>Admin</strong>
+                <small>Administrator</small>
+              </div>
+            </div>
+
+          </div>
+
+        </header>
+
+        {activePage === "Dashboard" && (
+          <DashboardHome
+            products={products}
+            onNavigate={handleNavigation}
+          />
+        )}
+
+        {activePage === "Products" && (
+          <Products
+            products={products}
+            setProducts={setProducts}
+          />
+        )}
+
+        {!["Dashboard", "Products"].includes(activePage) && (
+          <ComingSoon page={activePage} />
+        )}
+
+        <footer className="app-footer">
+          Business Management System © 2026
+          <span>•</span>
+          Inventory & Business Management
+        </footer>
+
+      </main>
+    </div>
+  );
+}
+
+/* =====================================================
+   APP
+===================================================== */
+
+function App() {
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [products, setProducts] = useState([]);
+
+  useEffect(() => {
+    if (!loggedIn) return;
+
+    const loadProducts = async () => {
+      try {
+        const response = await fetch(`${API_URL}/products`);
+
+        if (!response.ok) {
+          throw new Error("Failed to connect to backend");
+        }
+
+        const data = await response.json();
+        setProducts(data);
+      } catch (error) {
+        console.error("Backend error:", error);
+      }
+    };
+
+    loadProducts();
+  }, [loggedIn]);
+
+  if (!loggedIn) {
+    return <Login onLogin={() => setLoggedIn(true)} />;
+  }
+
+  return (
+    <Dashboard
+      products={products}
+      setProducts={setProducts}
+      onLogout={() => setLoggedIn(false)}
+    />
+  );
+}
+
+export default App;
