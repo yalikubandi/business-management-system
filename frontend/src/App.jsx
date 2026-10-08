@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const configuredApiUrl =
@@ -7,6 +7,99 @@ const normalizedApiUrl = configuredApiUrl.replace(/\/+$/, "");
 const API_URL = normalizedApiUrl.endsWith("/api")
   ? normalizedApiUrl
   : `${normalizedApiUrl}/api`;
+
+const LOGIN_ROLES = [
+  {
+    id: "admin",
+    label: "Admin",
+    description: "Full system access",
+    pages: [
+      "Dashboard",
+      "Products",
+      "Purchases",
+      "Sales",
+      "Place Order",
+      "Gifts",
+      "Expenses",
+      "Reports",
+      "Notifications",
+      "Orders",
+      "Settings",
+    ],
+  },
+  {
+    id: "manager",
+    label: "Business Manager",
+    description: "Manage daily operations",
+    pages: [
+      "Dashboard",
+      "Products",
+      "Purchases",
+      "Sales",
+      "Place Order",
+      "Gifts",
+      "Expenses",
+      "Reports",
+      "Notifications",
+      "Orders",
+    ],
+  },
+  {
+    id: "user",
+    label: "User",
+    description: "Order products for delivery",
+    pages: ["Place Order"],
+  },
+];
+
+const ACCOUNT_STORAGE_KEY = "business-management:accounts:v1";
+const PASSWORD_HASH_ITERATIONS = 120000;
+
+function getStoredAccounts() {
+  try {
+    const accounts = JSON.parse(
+      window.localStorage.getItem(ACCOUNT_STORAGE_KEY) || "[]"
+    );
+
+    return Array.isArray(accounts) ? accounts : [];
+  } catch {
+    return [];
+  }
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashPassword(password, saltHex) {
+  if (!window.crypto?.subtle) {
+    throw new Error("Secure password storage requires HTTPS or localhost.");
+  }
+
+  const salt = Uint8Array.from(
+    saltHex.match(/.{2}/g) || [],
+    (byte) => Number.parseInt(byte, 16)
+  );
+  const keyMaterial = await window.crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const hash = await window.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: PASSWORD_HASH_ITERATIONS,
+      hash: "SHA-256",
+    },
+    keyMaterial,
+    256
+  );
+
+  return bytesToHex(new Uint8Array(hash));
+}
 
 const formatMoney = (value) =>
   `TZS ${Number(value || 0).toLocaleString("en-TZ", {
@@ -93,19 +186,90 @@ function useAutoSavedDraft(storageKey, initialValue) {
    LOGIN
 ===================================================== */
 
-function Login({ onLogin }) {
+function Login({ onLogin, availableRoles }) {
+  const [selectedRoleId, setSelectedRoleId] = useState(availableRoles[0].id);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCreatingAccount, setIsCreatingAccount] = useState(() =>
+    !getStoredAccounts().some(
+      (account) => account.roleId === availableRoles[0].id
+    )
+  );
+  const selectedRole =
+    availableRoles.find((role) => role.id === selectedRoleId) || availableRoles[0];
+  const storedAccounts = getStoredAccounts();
+  const selectedRoleHasAccount = storedAccounts.some(
+    (account) => account.roleId === selectedRole.id
+  );
+  const canCreateAccount =
+    selectedRole.id !== "admin" || !selectedRoleHasAccount;
 
-  const handleLogin = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    setError("");
+    setIsSubmitting(true);
 
-    if (username === "admin" && password === "admin123") {
-      setError("");
-      onLogin();
-    } else {
-      setError("Invalid username or password");
+    try {
+      const cleanUsername = username.trim();
+      const usernameKey = cleanUsername.toLowerCase();
+      const accounts = getStoredAccounts();
+
+      if (isCreatingAccount) {
+        if (cleanUsername.length < 3) {
+          setError("Username must be at least 3 characters.");
+          return;
+        }
+
+        if (password.length < 8) {
+          setError("Password must be at least 8 characters.");
+          return;
+        }
+
+        if (accounts.some((account) => account.usernameKey === usernameKey)) {
+          setError("That username is already in use.");
+          return;
+        }
+
+        const salt = bytesToHex(window.crypto.getRandomValues(new Uint8Array(16)));
+        const passwordHash = await hashPassword(password, salt);
+
+        accounts.push({
+          username: cleanUsername,
+          usernameKey,
+          roleId: selectedRole.id,
+          salt,
+          passwordHash,
+        });
+        window.localStorage.setItem(ACCOUNT_STORAGE_KEY, JSON.stringify(accounts));
+        onLogin(selectedRole.id, cleanUsername);
+        return;
+      }
+
+      const account = accounts.find(
+        (savedAccount) =>
+          savedAccount.roleId === selectedRole.id &&
+          savedAccount.usernameKey === usernameKey
+      );
+
+      if (!account) {
+        setError("Invalid username or password.");
+        return;
+      }
+
+      const passwordHash = await hashPassword(password, account.salt);
+
+      if (passwordHash !== account.passwordHash) {
+        setError("Invalid username or password.");
+        return;
+      }
+
+      onLogin(selectedRole.id, account.username);
+    } catch (submitError) {
+      setError(submitError.message || "Could not access saved accounts.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -116,15 +280,48 @@ function Login({ onLogin }) {
 
         <h1>Business Manager</h1>
 
-        <p>Sign in to manage your business</p>
+        <p>
+          {availableRoles.length > 1
+            ? "Choose your account type"
+            : "Administrator sign in"}
+        </p>
 
-        <form onSubmit={handleLogin}>
+        {availableRoles.length > 1 && (
+          <div className="login-role-options" role="group" aria-label="Account type">
+            {availableRoles.map((role) => (
+              <button
+                key={role.id}
+                type="button"
+                className={selectedRoleId === role.id ? "active" : ""}
+                aria-pressed={selectedRoleId === role.id}
+                onClick={() => {
+                  setSelectedRoleId(role.id);
+                  setIsCreatingAccount(
+                    !getStoredAccounts().some(
+                      (account) => account.roleId === role.id
+                    )
+                  );
+                  setUsername("");
+                  setPassword("");
+                  setError("");
+                }}
+              >
+                {role.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <p className="login-role-description">{selectedRole.description}</p>
+
+        <form onSubmit={handleSubmit}>
           <label>Username</label>
 
           <input
             type="text"
-            placeholder="Enter username"
+            placeholder="Choose a username"
             value={username}
+            maxLength={40}
             onChange={(e) => setUsername(e.target.value)}
             required
           />
@@ -133,21 +330,51 @@ function Login({ onLogin }) {
 
           <input
             type="password"
-            placeholder="Enter password"
+            placeholder={
+              isCreatingAccount
+                ? "Create a password (8+ characters)"
+                : "Enter your password"
+            }
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            minLength={isCreatingAccount ? 8 : undefined}
             required
           />
 
           {error && <div className="error-message">❌ {error}</div>}
 
-          <button type="submit" className="primary-button login-button">
-            Login
+          <button
+            type="submit"
+            className="primary-button login-button"
+            disabled={isSubmitting}
+          >
+            {isSubmitting
+              ? "Please wait..."
+              : isCreatingAccount
+                ? "Create account"
+                : "Sign in"}
           </button>
         </form>
 
+        {canCreateAccount && (
+          <button
+            type="button"
+            className="login-mode-toggle"
+            onClick={() => {
+              setIsCreatingAccount((current) => !current);
+              setUsername("");
+              setPassword("");
+              setError("");
+            }}
+          >
+            {isCreatingAccount
+              ? "Already registered? Sign in"
+              : "New here? Create an account"}
+          </button>
+        )}
+
         <div className="demo-login">
-          Demo: <strong>admin</strong> / <strong>admin123</strong>
+          Accounts are stored in this browser only. This demo does not secure API access.
         </div>
       </div>
     </div>
@@ -285,6 +512,99 @@ function Dashboard({ products }) {
    PRODUCTS
 ===================================================== */
 
+function CameraBarcodeScanner({ onDetected, onClose }) {
+  const videoElement = useRef(null);
+  const onDetectedRef = useRef(onDetected);
+  const onCloseRef = useRef(onClose);
+  const [cameraError, setCameraError] = useState("");
+
+  onDetectedRef.current = onDetected;
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    let controls;
+    let disposed = false;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onCloseRef.current();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    const startScanner = async () => {
+      try {
+        const { BrowserMultiFormatReader } = await import("@zxing/browser");
+
+        if (disposed) {
+          return;
+        }
+
+        const reader = new BrowserMultiFormatReader();
+        controls = await reader.decodeFromVideoDevice(
+          undefined,
+          videoElement.current,
+          (result) => {
+            if (!result || disposed) {
+              return;
+            }
+
+            disposed = true;
+            onDetectedRef.current(result.getText());
+          }
+        );
+
+        if (disposed) {
+          controls.stop();
+        }
+      } catch {
+        if (!disposed) {
+          setCameraError(
+            "Could not access the camera. Check camera permissions and try again."
+          );
+        }
+      }
+    };
+
+    const startTimeout = window.setTimeout(startScanner, 0);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(startTimeout);
+      controls?.stop();
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  return (
+    <div className="camera-scanner-backdrop">
+      <section
+        className="camera-scanner-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="camera-scanner-title"
+      >
+        <div className="camera-scanner-heading">
+          <div>
+            <h2 id="camera-scanner-title">Scan product barcode</h2>
+            <p>Position the barcode inside the camera view.</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close camera scanner">
+            Close
+          </button>
+        </div>
+
+        <div className="camera-scanner-video-frame">
+          <video ref={videoElement} autoPlay muted playsInline />
+        </div>
+
+        {cameraError && <div className="error-message">{cameraError}</div>}
+      </section>
+    </div>
+  );
+}
+
 function Products({ products, setProducts }) {
   const [formData, setFormData, draftStatus] = useAutoSavedDraft(
     "business-management:product-draft:v1",
@@ -299,6 +619,9 @@ function Products({ products, setProducts }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [defaultMinimumStock, setDefaultMinimumStock] = useState(5);
+  const [codeEntryMode, setCodeEntryMode] = useState("manual");
+  const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
+  const productCodeInput = useRef(null);
 
   useEffect(() => {
     const loadDefaultMinimumStock = async () => {
@@ -543,6 +866,17 @@ function Products({ products, setProducts }) {
 
       {error && <div className="error-message">❌ {error}</div>}
 
+      {isCameraScannerOpen && (
+        <CameraBarcodeScanner
+          onDetected={(productCode) => {
+            setFormData((previous) => ({ ...previous, product_code: productCode }));
+            setIsCameraScannerOpen(false);
+            window.requestAnimationFrame(() => productCodeInput.current?.focus());
+          }}
+          onClose={() => setIsCameraScannerOpen(false)}
+        />
+      )}
+
       <div className="form-card">
         <div className="form-title">
           <div>
@@ -558,15 +892,54 @@ function Products({ products, setProducts }) {
         <form onSubmit={handleSubmit}>
           <div className="form-grid">
             <div className="form-group">
-              <label>Product Code</label>
+              <label htmlFor="product-code">Product Code</label>
+
+              <div className="code-entry-options" role="group" aria-label="Product code entry method">
+                <button
+                  type="button"
+                  className={codeEntryMode === "manual" ? "active" : ""}
+                  aria-pressed={codeEntryMode === "manual"}
+                  onClick={() => {
+                    setCodeEntryMode("manual");
+                    productCodeInput.current?.focus();
+                  }}
+                >
+                  Type manually
+                </button>
+                <button
+                  type="button"
+                  className={codeEntryMode === "scanner" ? "active" : ""}
+                  aria-pressed={codeEntryMode === "scanner"}
+                  onClick={() => {
+                    setCodeEntryMode("scanner");
+                    setIsCameraScannerOpen(true);
+                  }}
+                >
+                  Scan with camera
+                </button>
+              </div>
 
               <input
+                id="product-code"
+                ref={productCodeInput}
                 type="text"
                 name="product_code"
-                placeholder="e.g. PRD-001"
+                maxLength={100}
+                autoComplete="off"
+                placeholder={codeEntryMode === "scanner" ? "Scan barcode or enter code..." : "e.g. PRD-001"}
                 value={formData.product_code}
                 onChange={handleChange}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                  }
+                }}
               />
+              <small>
+                {codeEntryMode === "scanner"
+                  ? "Use the camera to scan a barcode or enter the code here."
+                  : "Enter the product code yourself or scan it with your camera."}
+              </small>
             </div>
 
             <div className="form-group">
@@ -858,6 +1231,308 @@ function Products({ products, setProducts }) {
         )}
       </div>
     </div>
+  );
+}
+
+/* =====================================================
+   CUSTOMER ORDERS
+===================================================== */
+
+function PlaceOrder({ products, customerName }) {
+  const [form, setForm] = useState({
+    product_id: "",
+    quantity: "1",
+    customer_name: customerName,
+    phone_number: "",
+    delivery_required: true,
+    delivery_address: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const selectedProduct = products.find(
+    (product) => String(product.id) === form.product_id
+  );
+
+  useEffect(() => {
+    setForm((previous) => ({ ...previous, customer_name: customerName }));
+  }, [customerName]);
+
+  const handleChange = (event) => {
+    const { name, value, type, checked } = event.target;
+    setForm((previous) => ({
+      ...previous,
+      [name]: type === "checkbox" ? checked : value,
+    }));
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setLoading(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const response = await fetch(`${API_URL}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not send your order.");
+      }
+
+      const orderSummary = `${data.product_name} · ${data.quantity} × ${formatMoney(data.unit_price)} each · Total ${formatMoney(data.total_amount)}.`;
+      setMessage(
+        data.sms_sent
+          ? `${orderSummary} Order #${data.order_id} sent. A confirmation was texted to ${form.phone_number}.`
+          : data.notification_status === "not_configured"
+            ? `${orderSummary} Order #${data.order_id} sent. SMS confirmation is not configured yet.`
+            : `${orderSummary} Order #${data.order_id} sent, but the SMS could not be delivered.`
+      );
+      setForm((previous) => ({ ...previous, product_id: "", quantity: "1" }));
+    } catch (submitError) {
+      setError(submitError.message || "Could not send your order.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const quantity = Number(form.quantity || 0);
+
+  return (
+    <ModulePage
+      title="Place Order"
+      icon="🧾"
+      description="Choose a product and tell us where to deliver it."
+    >
+      {message && <div className="success-message" role="status">{message}</div>}
+      {error && <div className="error-message" role="alert">{error}</div>}
+
+      <div className="form-card">
+        <div className="form-title">
+          <div>
+            <h2>Order details</h2>
+            <p>Your request will be reviewed by the business.</p>
+          </div>
+        </div>
+
+        {!products.length ? (
+          <div className="error-message">No products are available to order right now.</div>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            <div className="form-grid">
+              <div className="form-group">
+                <label htmlFor="order-customer-name">Your name</label>
+                <input
+                  id="order-customer-name"
+                  name="customer_name"
+                  value={form.customer_name}
+                  onChange={handleChange}
+                  maxLength={150}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="order-phone">Phone number for updates</label>
+                <input
+                  id="order-phone"
+                  name="phone_number"
+                  type="tel"
+                  placeholder="e.g. +255 712 345 678"
+                  value={form.phone_number}
+                  onChange={handleChange}
+                  autoComplete="tel"
+                  maxLength={24}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="order-product">Product</label>
+                <select
+                  id="order-product"
+                  name="product_id"
+                  value={form.product_id}
+                  onChange={handleChange}
+                  required
+                >
+                  <option value="">Choose a product</option>
+                  {products.map((product) => (
+                    <option
+                      key={product.id}
+                      value={product.id}
+                      disabled={Number(product.quantity) < 1}
+                    >
+                      {product.name} ({product.quantity} available)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="order-quantity">Quantity</label>
+                <input
+                  id="order-quantity"
+                  name="quantity"
+                  type="number"
+                  min="1"
+                  max={selectedProduct?.quantity || undefined}
+                  step="1"
+                  value={form.quantity}
+                  onChange={handleChange}
+                  required
+                />
+              </div>
+
+              {selectedProduct && quantity > 0 && (
+                <div className="order-product-summary form-group full-width">
+                  <div>
+                    <span>Price per item</span>
+                    <strong>{formatMoney(selectedProduct.selling_price)}</strong>
+                  </div>
+                  <div>
+                    <span>Available stock</span>
+                    <strong>{selectedProduct.quantity}</strong>
+                  </div>
+                  <div className="order-product-summary-total">
+                    <span>Estimated total</span>
+                    <strong>
+                      {formatMoney(quantity * Number(selectedProduct.selling_price || 0))}
+                    </strong>
+                  </div>
+                </div>
+              )}
+
+              <div className="form-group full-width order-delivery-option">
+                <label>
+                  <input
+                    type="checkbox"
+                    name="delivery_required"
+                    checked={form.delivery_required}
+                    onChange={handleChange}
+                  />
+                  Deliver this order to me
+                </label>
+              </div>
+
+              {form.delivery_required && (
+                <div className="form-group full-width">
+                  <label htmlFor="order-delivery-address">Delivery location</label>
+                  <textarea
+                    id="order-delivery-address"
+                    name="delivery_address"
+                    placeholder="Region, district, street, and directions"
+                    value={form.delivery_address}
+                    onChange={handleChange}
+                    maxLength={500}
+                    required
+                  />
+                </div>
+              )}
+            </div>
+
+            <button type="submit" className="primary-button" disabled={loading}>
+              {loading ? "Sending order..." : "Send order"}
+            </button>
+          </form>
+        )}
+      </div>
+    </ModulePage>
+  );
+}
+
+function CustomerOrders() {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadOrders = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_URL}/orders`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not load customer orders.");
+      }
+
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (loadError) {
+      setError(loadError.message || "Could not load customer orders.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadOrders();
+  }, []);
+
+  return (
+    <ModulePage
+      title="Customer Orders"
+      icon="📬"
+      description="Review product requests and delivery details."
+    >
+      {error && <div className="error-message" role="alert">{error}</div>}
+
+      <div className="form-card">
+        <div className="form-title order-list-heading">
+          <div>
+            <h2>Incoming orders</h2>
+            <p>{orders.length} requests</p>
+          </div>
+          <button type="button" className="secondary-button" onClick={loadOrders} disabled={loading}>
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
+
+        {loading ? (
+          <p>Loading orders...</p>
+        ) : orders.length === 0 ? (
+          <p>No customer orders yet.</p>
+        ) : (
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th>Phone</th>
+                  <th>Product</th>
+                  <th>Amount</th>
+                  <th>Delivery location</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th>SMS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order) => (
+                  <tr key={order.id}>
+                    <td>#{order.id}</td>
+                    <td>{order.customer_name}</td>
+                    <td><a href={`tel:${order.phone_number}`}>{order.phone_number}</a></td>
+                    <td>{order.product_name}</td>
+                    <td>{order.quantity}</td>
+                    <td>{order.delivery_address || "Pickup"}</td>
+                    <td>{formatMoney(order.total_amount)}</td>
+                    <td>{order.status}</td>
+                    <td>{order.notification_status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </ModulePage>
   );
 }
 
@@ -2670,7 +3345,13 @@ function Settings() {
 ===================================================== */
 
 function App() {
+  const isAdminLoginPath = window.location.pathname.replace(/\/+$/, "") === "/admin";
+  const availableRoles = isAdminLoginPath
+    ? LOGIN_ROLES.filter((role) => role.id === "admin")
+    : LOGIN_ROLES.filter((role) => role.id !== "admin");
   const [loggedIn, setLoggedIn] = useState(false);
+  const [userRole, setUserRole] = useState(null);
+  const [accountUsername, setAccountUsername] = useState("");
   const [activePage, setActivePage] = useState("Dashboard");
   const [products, setProducts] = useState([]);
   const [appLoading, setAppLoading] = useState(false);
@@ -2679,6 +3360,8 @@ function App() {
   const menuItems = [
     { name: "Dashboard", icon: "🏠" },
     { name: "Products", icon: "📦" },
+    { name: "Place Order", icon: "🧾" },
+    { name: "Orders", icon: "📬" },
     { name: "Purchases", icon: "🛒" },
     { name: "Sales", icon: "💰" },
     { name: "Gifts", icon: "🎁" },
@@ -2687,6 +3370,10 @@ function App() {
     { name: "Notifications", icon: "🔔" },
     { name: "Settings", icon: "⚙️" },
   ];
+  const activeRole = LOGIN_ROLES.find((role) => role.id === userRole);
+  const visibleMenuItems = menuItems.filter((item) =>
+    activeRole?.pages.includes(item.name)
+  );
 
   // Load products once at App level so Dashboard, Purchases,
   // Reports and Notifications always use the latest database data.
@@ -2717,13 +3404,18 @@ function App() {
     }
   }, [loggedIn]);
 
-  const handleLogin = () => {
+  const handleLogin = (roleId, username) => {
+    setUserRole(roleId);
+    setAccountUsername(username);
     setLoggedIn(true);
-    setActivePage("Dashboard");
+    const role = LOGIN_ROLES.find((item) => item.id === roleId);
+    setActivePage(role?.pages[0] || "Dashboard");
   };
 
   const handleLogout = () => {
     setLoggedIn(false);
+    setUserRole(null);
+    setAccountUsername("");
     setActivePage("Dashboard");
     setProducts([]);
     setProductsError("");
@@ -2745,6 +3437,14 @@ function App() {
             setProducts={setProducts}
           />
         );
+
+      case "Place Order":
+        return (
+          <PlaceOrder products={products} customerName={accountUsername} />
+        );
+
+      case "Orders":
+        return <CustomerOrders />;
 
       case "Purchases":
         return (
@@ -2785,7 +3485,7 @@ function App() {
   };
 
   if (!loggedIn) {
-    return <Login onLogin={handleLogin} />;
+    return <Login onLogin={handleLogin} availableRoles={availableRoles} />;
   }
 
   return (
@@ -2801,7 +3501,7 @@ function App() {
         </div>
 
         <nav className="sidebar-nav">
-          {menuItems.map((item) => (
+          {visibleMenuItems.map((item) => (
             <button
               key={item.name}
               type="button"

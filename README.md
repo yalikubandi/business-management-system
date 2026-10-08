@@ -32,9 +32,10 @@ The Vite development server prints the frontend URL. The API defaults to `http:/
 
 Backend settings are read from `backend/.env` or the hosting provider's environment configuration:
 
-- `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL_CA`
 - `CORS_ORIGINS`: comma-separated allowed frontend origins
 - `FLASK_DEBUG`: enable only for local development; defaults to `false`
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`: optional Twilio credentials for sending order confirmation SMS messages. Without all three values, orders are saved but SMS is not sent.
 
 Frontend setting:
 
@@ -42,13 +43,13 @@ Frontend setting:
 
 ## Hosting status
 
-The product, purchase, and sales APIs use MySQL. This project is not yet safe to expose publicly: the current login is a hardcoded client-side demo check, and the API has no server-side authentication. Gifts, expenses, and settings are UI placeholders; reports are limited to basic product/stock calculations. Add server-side authentication and authorization, finish the unfinished modules, and define database migrations, backups, and a production deployment target before public launch.
+The product, purchase, sales, and customer-order APIs use MySQL. Login accounts are currently stored in the browser and the API has no server-side authentication or authorization, so this project is not safe to expose publicly. SMS order confirmations require Twilio credentials. Gifts, expenses, and settings are UI placeholders; reports are limited to basic product/stock calculations. Add server-side authentication and authorization, finish the unfinished modules, and define database migrations, backups, and a production deployment target before public launch.
 
 ## Deploy to Render
 
-1. Create an externally hosted MySQL database. Render Blueprints do not provision MySQL. Make sure its provider allows connections from Render and create the `business_management` database.
+1. Create a TiDB Cloud Starter instance, which accepts MySQL-protocol connections and includes a monthly free allowance. Usage beyond the allowance can be billed, so configure a spending limit. Create the `business_management` database and get its public connection details from the TiDB console.
 2. In the Render Dashboard, choose **New > Blueprint** and select this GitHub repository. Render reads the root `render.yaml` and creates the API and frontend services.
-3. Enter the MySQL host, username, password, and database name when prompted. The Blueprint connects the frontend URL to the API and configures the matching CORS origin.
+3. Enter the database host, username, password, and database name when prompted. The Blueprint configures TiDB's port and TLS verification, and connects the frontend URL to the API with the matching CORS origin.
 4. Wait for both services to finish deploying, then open the frontend service URL.
 
-The API creates its tables when it starts. Do not expose this demo publicly with real business data until server-side authentication and authorization are implemented; the current login is only a client-side demo check and the API endpoints are unauthenticated.
+The API creates its tables when it starts. Do not expose this demo publicly with real business data until server-side authentication and authorization are implemented; login accounts are browser-local and the API endpoints are unauthenticated.

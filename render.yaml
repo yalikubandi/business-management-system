@@ -2,6 +2,8 @@ services:
   - type: web
     name: business-management-api
     runtime: python
+    branch: main
+    autoDeployTrigger: commit
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT
@@ -11,12 +13,16 @@ services:
         value: 3.12.8
       - key: DB_HOST
         sync: false
+      - key: DB_PORT
+        value: "4000"
       - key: DB_USER
         sync: false
       - key: DB_PASSWORD
         sync: false
       - key: DB_NAME
         sync: false
+      - key: DB_SSL_CA
+        value: /etc/ssl/certs/ca-certificates.crt
       - key: CORS_ORIGINS
         fromService:
           type: web
@@ -28,6 +34,8 @@ services:
   - type: web
     name: business-management-frontend
     runtime: static
+    branch: main
+    autoDeployTrigger: commit
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist

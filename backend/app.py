@@ -1,4 +1,6 @@
 import os
+import base64
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from flask import Flask, request, jsonify
@@ -6,6 +8,9 @@ from flask_cors import CORS
 import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -20,7 +25,8 @@ CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         "CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173"
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174"
     ).split(",")
     if origin.strip()
 ]
@@ -33,10 +39,18 @@ CORS(app, origins=CORS_ORIGINS)
 
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
+    "port": int(os.getenv("DB_PORT", "3306")),
     "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
     "database": os.getenv("DB_NAME")
 }
+DB_SSL_CA = os.getenv("DB_SSL_CA")
+if DB_SSL_CA:
+    DB_CONFIG.update({
+        "ssl_ca": DB_SSL_CA,
+        "ssl_verify_cert": True,
+        "ssl_verify_identity": True,
+    })
 
 DEFAULT_SETTINGS = {
     "business_name": "Business Management System",
@@ -252,6 +266,24 @@ def initialize_database():
                 WHERE quantity > 0
             """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS customer_orders (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                customer_name VARCHAR(150) NOT NULL,
+                phone_number VARCHAR(24) NOT NULL,
+                product_id INT NOT NULL,
+                product_name VARCHAR(150) NOT NULL,
+                quantity INT NOT NULL,
+                unit_price DECIMAL(10,2) NOT NULL,
+                total_amount DECIMAL(12,2) NOT NULL,
+                delivery_required BOOLEAN NOT NULL DEFAULT TRUE,
+                delivery_address VARCHAR(500),
+                status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+                notification_status VARCHAR(30) NOT NULL DEFAULT 'not_configured',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         connection.commit()
 
         print("Database tables are ready.")
@@ -268,6 +300,46 @@ def initialize_database():
             cursor.close()
 
         connection.close()
+
+
+def send_order_sms(phone_number, order_id, product_name, quantity, total_amount):
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    from_number = os.getenv("TWILIO_FROM_NUMBER")
+
+    if not all((account_sid, auth_token, from_number)):
+        return False, "not_configured"
+
+    message = (
+        f"Order #{order_id} received: {quantity} x {product_name}. "
+        f"Estimated total TZS {total_amount}. We will contact you about delivery."
+    )
+    credentials = base64.b64encode(
+        f"{account_sid}:{auth_token}".encode("utf-8")
+    ).decode("ascii")
+    request_body = urlencode({
+        "To": phone_number,
+        "From": from_number,
+        "Body": message,
+    }).encode("utf-8")
+    sms_request = Request(
+        f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
+        data=request_body,
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(sms_request, timeout=8) as response:
+            if response.status == 201:
+                return True, "sent"
+    except (HTTPError, URLError, TimeoutError) as sms_error:
+        print("Order SMS delivery failed:", sms_error)
+
+    return False, "failed"
 
 
 # ============================================================
@@ -1197,6 +1269,180 @@ def add_expense():
             "error": str(e)
         }), 500
 
+    finally:
+        if cursor:
+            cursor.close()
+        connection.close()
+
+
+# ============================================================
+# CUSTOMER ORDERS
+# ============================================================
+
+@app.route("/api/orders", methods=["GET"])
+def get_customer_orders():
+    connection = get_db_connection()
+
+    if not connection:
+        return jsonify({"success": False, "error": "Database connection failed"}), 500
+
+    cursor = None
+
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT
+                id,
+                customer_name,
+                phone_number,
+                product_id,
+                product_name,
+                quantity,
+                unit_price,
+                total_amount,
+                delivery_required,
+                delivery_address,
+                status,
+                notification_status,
+                created_at
+            FROM customer_orders
+            ORDER BY created_at DESC, id DESC
+        """)
+
+        return jsonify(cursor.fetchall()), 200
+    except Error as database_error:
+        return jsonify({"success": False, "error": str(database_error)}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        connection.close()
+
+
+@app.route("/api/orders", methods=["POST"])
+def add_customer_order():
+    data = request.get_json(silent=True)
+
+    if not data:
+        return jsonify({"success": False, "error": "Order details are required"}), 400
+
+    customer_name = str(data.get("customer_name", "")).strip()
+    phone_number = str(data.get("phone_number", "")).strip()
+    delivery_required = data.get("delivery_required", True)
+    delivery_address = str(data.get("delivery_address", "")).strip()
+
+    if not customer_name or len(customer_name) > 150:
+        return jsonify({"success": False, "error": "Enter your name (up to 150 characters)"}), 400
+
+    if (
+        len(phone_number) > 24
+        or not re.fullmatch(r"[+0-9().\s-]{6,24}", phone_number)
+        or len(re.sub(r"\D", "", phone_number)) < 6
+    ):
+        return jsonify({"success": False, "error": "Enter a valid phone number"}), 400
+
+    if not isinstance(delivery_required, bool):
+        return jsonify({"success": False, "error": "Delivery choice is invalid"}), 400
+
+    if delivery_required and (not delivery_address or len(delivery_address) > 500):
+        return jsonify({"success": False, "error": "Enter a delivery location (up to 500 characters)"}), 400
+
+    try:
+        product_id = int(data.get("product_id"))
+        quantity = int(data.get("quantity"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Choose a product and valid quantity"}), 400
+
+    if product_id <= 0 or quantity <= 0:
+        return jsonify({"success": False, "error": "Quantity must be greater than zero"}), 400
+
+    connection = get_db_connection()
+
+    if not connection:
+        return jsonify({"success": False, "error": "Database connection failed"}), 500
+
+    cursor = None
+
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT id, name, quantity, selling_price
+            FROM products
+            WHERE id = %s
+        """, (product_id,))
+        product = cursor.fetchone()
+
+        if not product:
+            connection.rollback()
+            return jsonify({"success": False, "error": "Product not found"}), 404
+
+        if quantity > int(product["quantity"] or 0):
+            connection.rollback()
+            return jsonify({
+                "success": False,
+                "error": f"Only {int(product['quantity'] or 0)} available",
+            }), 400
+
+        unit_price = Decimal(str(product["selling_price"] or 0))
+        total_amount = unit_price * quantity
+        cursor.execute("""
+            INSERT INTO customer_orders (
+                customer_name,
+                phone_number,
+                product_id,
+                product_name,
+                quantity,
+                unit_price,
+                total_amount,
+                delivery_required,
+                delivery_address
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            customer_name,
+            phone_number,
+            product_id,
+            product["name"],
+            quantity,
+            unit_price,
+            total_amount,
+            delivery_required,
+            delivery_address if delivery_required else None,
+        ))
+        order_id = cursor.lastrowid
+        connection.commit()
+
+        sms_sent, notification_status = send_order_sms(
+            phone_number,
+            order_id,
+            product["name"],
+            quantity,
+            total_amount,
+        )
+
+        if notification_status != "not_configured":
+            try:
+                cursor.execute(
+                    "UPDATE customer_orders SET notification_status = %s WHERE id = %s",
+                    (notification_status, order_id),
+                )
+                connection.commit()
+            except Error as status_error:
+                connection.rollback()
+                print("Order SMS status update failed:", status_error)
+
+        return jsonify({
+            "success": True,
+            "order_id": order_id,
+            "product_name": product["name"],
+            "quantity": quantity,
+            "unit_price": str(unit_price),
+            "total_amount": str(total_amount),
+            "sms_sent": sms_sent,
+            "notification_status": notification_status,
+        }), 201
+    except Error as database_error:
+        connection.rollback()
+        return jsonify({"success": False, "error": str(database_error)}), 500
     finally:
         if cursor:
             cursor.close()
